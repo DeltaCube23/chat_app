@@ -2,11 +2,13 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log"
 	"net"
 	"strings"
 	"sync"
+	"time"
 )
 
 //Server is
@@ -46,51 +48,54 @@ func (s *Server) ListenForMessages(conn net.Conn, name string) {
 				length++
 			}
 			msg := string(buf[:length])
-
+			//parse the string
 			msg = strings.Trim(msg, "\r\n")
 			args := strings.Split(msg, " ")
 			cmd := strings.TrimSpace(args[0])
 
 			switch cmd {
 			case "/pm":
-				s.pm(conn, args)
+				s.pm(conn, name, args)
 			case "/broad":
-				s.broad(conn, args)
+				s.broad(conn, name, args)
 			case "/quit":
-				s.quit(conn, args)
+				s.quit(conn, name)
 			}
 		}
 	}
 }
 
-func (s *Server) pm(conn net.Conn, args []string) {
-	msg := strings.Join(args[3:], " ")
+//for private message
+func (s *Server) pm(conn net.Conn, name string, args []string) {
+	msg := strings.Join(args[2:], " ")
 	s.mu.RLock()
-	to := s.ClientConnections[args[2]]
+	to := s.ClientConnections[args[1]]
 	s.mu.RUnlock()
-	msg = "private from " + args[1] + " : " + msg + " $"
+	msg = "private from " + name + " : " + msg + " $"
 	to.Write([]byte(msg))
 }
 
-func (s *Server) broad(conn net.Conn, args []string) {
-	msg := strings.Join(args[2:], " ")
+//for broadcast
+func (s *Server) broad(conn net.Conn, name string, args []string) {
+	msg := strings.Join(args[1:], " ")
 	s.mu.RLock()
-	for name, id := range s.ClientConnections {
-		if args[1] != name {
-			msg = "general from " + args[1] + " : " + msg + " $"
+	for user, id := range s.ClientConnections {
+		if user != name {
+			msg = "general from " + name + " : " + msg + " $"
 			id.Write([]byte(msg))
 		}
 	}
 	s.mu.RUnlock()
 }
 
-func (s *Server) quit(conn net.Conn, args []string) {
-	log.Printf("client %s has left the chat", args[1])
+//to quit
+func (s *Server) quit(conn net.Conn, name string) {
+	log.Printf("client %s has left the chat", name)
 	s.mu.Lock()
-	to := s.ClientConnections[args[1]]
-	delete(s.ClientConnections, args[1]) //erase detailts from the map
+	to := s.ClientConnections[name]
+	delete(s.ClientConnections, name) //erase detailts from the map
 	s.mu.Unlock()
-	to.Write([]byte("Good Bye $"))
+	to.Write([]byte("Good Bye$"))
 	to.Close()
 }
 
@@ -112,17 +117,17 @@ func (s *Server) ManageClient(conn net.Conn) {
 		}
 		length++
 	}
+	//to parse the string
 	msg := string(buf[:length])
-
 	msg = strings.Trim(msg, "\r\n")
 	args := strings.Split(msg, " ")
 	cmd := strings.TrimSpace(args[0])
 	var reply string
 
 	if cmd == "/auth" {
-		if args[1] == s.Password {
+		if args[1] == s.Password { // check for correct password
 			s.mu.RLock()
-			_, ok := s.ClientConnections[args[2]]
+			_, ok := s.ClientConnections[args[2]] // check if username exists
 			s.mu.RUnlock()
 			if ok == true {
 				reply = "Username Already taken. Password was correct $"
@@ -146,22 +151,17 @@ func (s *Server) ManageClient(conn net.Conn) {
 
 //ListenForConnections from client
 func (s *Server) ListenForConnections(joined chan net.Conn, listener net.Listener) {
-	for {
-		select {
-		default:
-			conn, err := listener.Accept()
-			if err != nil {
-				fmt.Printf("failed to accept connection: %s", err.Error())
-				continue
-			}
-			joined <- conn
-		}
+	conn, err := listener.Accept()
+	if err != nil {
+		fmt.Printf("failed to accept connection: %s", err.Error())
+		return
 	}
+	joined <- conn
 }
 
 //Run starts the server
-func (s *Server) Run() {
-	listener, err := net.Listen("tcp", ":"+"8080")
+func (s *Server) Run(ctx context.Context) {
+	listener, err := net.Listen("tcp", ":"+"8888")
 	if err != nil {
 		fmt.Printf("unable to start server: %s", err.Error())
 		return
@@ -169,12 +169,28 @@ func (s *Server) Run() {
 	defer listener.Close()
 
 	joined := make(chan net.Conn)
-	go s.ListenForConnections(joined, listener)
 
 	for {
+		go s.ListenForConnections(joined, listener)
 		select {
-		case conn := <-joined:
+		case <-ctx.Done(): // when server exits
+			s.blackout()
+			time.Sleep(5 * time.Second)
+			fmt.Println("Terminating Server...")
+			return
+		case conn := <-joined: // when new client is connected
 			go s.ManageClient(conn)
 		}
 	}
+}
+
+//terminate all clients before server exits
+func (s *Server) blackout() {
+	s.mu.Lock()
+	for name, id := range s.ClientConnections {
+		delete(s.ClientConnections, name)
+		id.Write([]byte("Good Bye$"))
+		fmt.Printf("Terminating Client %s...\n", name)
+	}
+	s.mu.Unlock()
 }
