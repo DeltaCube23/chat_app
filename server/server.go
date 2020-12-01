@@ -14,14 +14,16 @@ import (
 //Server is
 type Server struct {
 	Password          string
+	Address           string
 	ClientConnections map[string]net.Conn
 	mu                sync.RWMutex
 }
 
 //NewServer instance
-func NewServer(password string) *Server {
+func NewServer(password, address string) *Server {
 	return &Server{
 		Password:          password,
+		Address:           address,
 		ClientConnections: make(map[string]net.Conn),
 	}
 }
@@ -161,13 +163,20 @@ func (s *Server) ListenForConnections(joined chan net.Conn, listener net.Listene
 
 //Run starts the server
 func (s *Server) Run(ctx context.Context) {
-	listener, err := net.Listen("tcp", ":"+"8888")
+	service := ":" + s.Address
+	tcpAddr, err := net.ResolveTCPAddr("tcp4", service)
+	if err != nil {
+		fmt.Printf("unable to resolve tcpaddress: %s", err.Error())
+		return
+	}
+
+	listener, err := net.ListenTCP("tcp", tcpAddr)
 	if err != nil {
 		fmt.Printf("unable to start server: %s", err.Error())
 		return
 	}
 	defer listener.Close()
-
+	log.Printf("Server Started")
 	joined := make(chan net.Conn)
 
 	for {

@@ -11,14 +11,16 @@ import (
 type Client struct {
 	Username string
 	Password string
+	Address  string
 	Conn     net.Conn
 }
 
 //NewClient instance is created
-func NewClient(username, password string) *Client {
+func NewClient(username, password, address string) *Client {
 	return &Client{
 		Username: username,
 		Password: password,
+		Address:  address,
 	}
 }
 
@@ -50,7 +52,7 @@ func (c *Client) HandleServer() {
 		go c.getServerMessage(recv)
 		select {
 		case msg := <-recv:
-			fmt.Printf("\n%s\n>> ", msg)
+			fmt.Printf("\n>> %s\n>> ", msg)
 			if msg == "Good Bye" {
 				os.Exit(0)
 			}
@@ -64,6 +66,7 @@ func (c *Client) getClientMessage(recv chan string) {
 	if err != nil {
 		return
 	}
+	msg = msg + "$"
 	recv <- msg
 }
 
@@ -76,12 +79,19 @@ func (c *Client) HandleClient() {
 		case msg := <-recv:
 			c.Conn.Write([]byte(msg))
 		}
+		fmt.Printf(">> ")
 	}
 }
 
 //Run the client side
 func (c *Client) Run() {
-	conn, err := net.Dial("tcp", ":"+"8888")
+	service := ":" + c.Address
+	tcpAddr, err := net.ResolveTCPAddr("tcp4", service)
+	if err != nil {
+		fmt.Printf("unable to resolve tcpaddress: %s", err.Error())
+		return
+	}
+	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
 		fmt.Printf("Unable to connect to server : %s", err.Error())
 	}
